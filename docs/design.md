@@ -72,18 +72,24 @@ Master → 分发给多个 Agent 独立评审
 
 ## 消息协议
 
-各 Agent 之间通过结构化消息通信：
+各 Agent 之间通过结构化消息通信，支持两种传输方案。
+
+### 消息格式
 
 ```json
 {
+  "id": "msg-001",
   "from": "analyzer",
   "to": "architect",
   "type": "task",
+  "priority": "P1",
   "content": {
     "demand_id": "DMD-001",
     "summary": "用户需要导出报表功能",
     "acceptance_criteria": ["支持 CSV", "支持 Excel"]
-  }
+  },
+  "status": "pending",
+  "created_at": "2026-03-31T13:00:00+08:00"
 }
 ```
 
@@ -95,6 +101,51 @@ Master → 分发给多个 Agent 独立评审
 | `approve` | 审批通过 |
 | `reject` | 审批拒绝 |
 | `sync` | 记忆同步 |
+
+---
+
+### 方案一：SQLite 持久化队列
+
+消息写入数据库，各 Agent 轮询处理，适合持久化和故障恢复。
+
+```sql
+CREATE TABLE messages (
+    id         TEXT PRIMARY KEY,
+    from_agent TEXT NOT NULL,
+    to_agent   TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    priority   TEXT DEFAULT 'P1',
+    content    TEXT NOT NULL,
+    status     TEXT DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_msg_to_status ON messages(to_agent, status);
+```
+
+**流程**：
+1. Agent A 写入消息 `to_agent=B`
+2. Agent B 轮询 `SELECT WHERE to_agent='B' AND status='pending'`
+3. 处理完成后更新 `status='processed'`
+
+---
+
+### 方案二：OpenClaw sessions_send（实时通知）
+
+利用 OpenClaw 的 session 机制做实时消息分发。
+
+```python
+# Agent A 向 Agent B 发送实时消息
+sessions_send(sessionKey_B, message)
+
+# Agent B 监听自己的收件箱 session
+```
+
+**特点**：
+- 实时性高（无轮询延迟）
+- 依赖 session 存活状态
+- 可与 SQLite 方案互补（实时用 session，持久化用 DB）
 
 ## 状态流转
 
